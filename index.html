@@ -1,0 +1,421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Interactive Math Graph</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        /* CSS Variables for theming */
+        :root {
+            --bg-color: #f3f4f6;
+            --text-color: #111827;
+            --container-bg: #ffffff;
+            --input-bg: #f9fafb;
+            --input-border: #d1d5db;
+            --primary-blue: #3b82f6;
+            --primary-blue-hover: #2563eb;
+            --shadow-color-light: rgba(0, 0, 0, 0.1);
+        }
+
+        /* Dark mode styles */
+        body.dark {
+            --bg-color: #111827;
+            --text-color: #f9fafb;
+            --container-bg: #1f2937;
+            --input-bg: #374151;
+            --input-border: #4b5563;
+        }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            overflow: hidden;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 1rem;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: flex-start;
+            height: 100vh;
+            box-sizing: border-box;
+        }
+
+        .main-container {
+            width: 100%;
+            max-width: 1200px;
+            display: flex;
+            flex-direction: column;
+            gap: 1rem;
+        }
+
+        .input-controls-container {
+            width: 100%;
+            padding: 1rem;
+            background-color: var(--container-bg);
+            border-radius: 0.5rem;
+            box-shadow: 0 4px 6px -1px var(--shadow-color-light), 0 2px 4px -2px var(--shadow-color-light);
+            box-sizing: border-box;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .input-wrapper {
+            flex-grow: 1;
+        }
+
+        #functionInput, #functionSelect, #drawButton {
+            padding: 0.75rem 1rem;
+            border: 1px solid var(--input-border);
+            border-radius: 0.5rem;
+            background-color: var(--input-bg);
+            color: var(--text-color);
+            font-size: 1rem;
+            box-sizing: border-box;
+            height: 44px; /* Consistent height */
+        }
+        
+        #functionInput {
+            width: 100%;
+        }
+
+        #functionInput:focus, #functionSelect:focus {
+            outline: none;
+            border-color: var(--primary-blue);
+            box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.4);
+        }
+        
+        #drawButton {
+            background-color: var(--primary-blue);
+            color: white;
+            font-weight: 600;
+            border-color: var(--primary-blue);
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+
+        #drawButton:hover {
+            background-color: var(--primary-blue-hover);
+        }
+
+        .canvas-container {
+            width: 100%;
+            height: 80vh;
+            background-color: var(--container-bg);
+            border-radius: 0.5rem;
+            box-shadow: inset 0 2px 4px 0 var(--shadow-color-light);
+            overflow: hidden;
+            position: relative;
+        }
+
+        canvas {
+            cursor: grab;
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
+        canvas:active {
+            cursor: grabbing;
+        }
+
+        #errorModal {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            padding: 0.75rem;
+            background-color: #fef2f2;
+            color: #991b1b;
+            font-size: 0.875rem;
+            text-align: center;
+            box-sizing: border-box;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="main-container">
+        <!-- Input controls -->
+        <div class="input-controls-container">
+            <div class="input-wrapper">
+                <input type="text" id="functionInput" value="sin(x)" placeholder="e.g., 2*x^3 - x^2">
+            </div>
+            <select id="functionSelect">
+                <option value="sin(x)">sin(x)</option>
+                <option value="cos(x)">cos(x)</option>
+                <option value="tan(x)">tan(x)</option>
+                <option value="x^2">x^2</option>
+                <option value="x^3">x^3</option>
+                <option value="log(x)">log(x)</option>
+                <option value="exp(x)">e^x</option>
+            </select>
+            <button id="drawButton">Plot</button>
+        </div>
+
+        <!-- Canvas for the graph -->
+        <div class="canvas-container">
+            <canvas id="canvas"></canvas>
+            <div id="errorModal"></div>
+        </div>
+    </div>
+
+    <script>
+        // --- DOM Elements ---
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const functionInput = document.getElementById('functionInput');
+        const functionSelect = document.getElementById('functionSelect');
+        const drawButton = document.getElementById('drawButton');
+        const errorModal = document.getElementById('errorModal');
+
+        // --- Graph State ---
+        let scale = 40; // Pixels per unit
+        let originX, originY; // Pixel coordinates of the origin (0,0)
+        let currentFunc = (x) => Math.sin(x); // Default function
+
+        // --- Panning State ---
+        let isDragging = false;
+        let dragStartX, dragStartY;
+        let originStartX, originStartY;
+        
+        // --- Math Expression Parser ---
+        function parseMathExpression(expr) {
+            const funcMap = {
+                'sin': 'Math.sin', 'cos': 'Math.cos', 'tan': 'Math.tan',
+                'log': 'Math.log', 'exp': 'Math.exp', 'sqrt': 'Math.sqrt',
+                'abs': 'Math.abs', 'pi': 'Math.PI'
+            };
+            let parsedExpr = expr.replace(/\b(sin|cos|tan|log|exp|sqrt|abs|pi)\b/g, (match) => funcMap[match]);
+            parsedExpr = parsedExpr.replace(/(\d+)([a-zA-Z(])/g, '$1*$2');
+            parsedExpr = parsedExpr.replace(/([a-zA-Z)])(\d+)/g, '$1*$2');
+            parsedExpr = parsedExpr.replace(/([a-zA-Z)])([a-zA-Z(])/g, '$1*$2');
+            parsedExpr = parsedExpr.replace(/\^/g, '**');
+            return parsedExpr;
+        }
+        
+        // --- Dark Mode Detection ---
+        function checkDarkMode() {
+            if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) {
+                document.body.classList.add('dark');
+            } else {
+                document.body.classList.remove('dark');
+            }
+        }
+
+        // --- Initialization ---
+        function initializeCanvas() {
+            const container = canvas.parentElement;
+            canvas.width = container.clientWidth;
+            canvas.height = container.clientHeight;
+            originX = canvas.width / 2;
+            originY = canvas.height / 2;
+            draw();
+        }
+
+        // --- Drawing ---
+        function draw() {
+            window.requestAnimationFrame(() => {
+                const isDarkMode = document.body.classList.contains('dark');
+                ctx.fillStyle = isDarkMode ? '#1f2937' : '#ffffff';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                drawGrid(isDarkMode);
+                drawAxes(isDarkMode);
+                drawFunction(currentFunc);
+            });
+        }
+        
+        function drawGrid(isDarkMode) {
+            ctx.strokeStyle = isDarkMode ? 'rgba(255, 255, 255, 0.1)' : 'rgba(0, 0, 0, 0.1)';
+            ctx.lineWidth = 1;
+            const gridStep = getNiceNumberStep(50, scale);
+            const startX = Math.floor(((0 - originX) / scale) / gridStep) * gridStep;
+            const endX = Math.ceil(((canvas.width - originX) / scale) / gridStep) * gridStep;
+            for (let i = startX; i <= endX; i += gridStep) {
+                const xPos = originX + i * scale;
+                ctx.beginPath();
+                ctx.moveTo(xPos, 0);
+                ctx.lineTo(xPos, canvas.height);
+                ctx.stroke();
+            }
+            const math_y_min = (originY - canvas.height) / scale;
+            const math_y_max = originY / scale;
+            const startY = Math.ceil(math_y_min / gridStep) * gridStep;
+            const endY = Math.floor(math_y_max / gridStep) * gridStep;
+            for (let i = startY; i <= endY; i += gridStep) {
+                const yPos = originY - i * scale;
+                ctx.beginPath();
+                ctx.moveTo(0, yPos);
+                ctx.lineTo(canvas.width, yPos);
+                ctx.stroke();
+            }
+        }
+
+        function getNiceNumberStep(minSpacingPixels, scale) {
+            const rawStep = minSpacingPixels / scale;
+            const pow10 = Math.pow(10, Math.floor(Math.log10(rawStep)));
+            const normalizedStep = rawStep / pow10;
+            let multiplier;
+            if (normalizedStep <= 1) multiplier = 1;
+            else if (normalizedStep <= 2) multiplier = 2;
+            else if (normalizedStep <= 5) multiplier = 5;
+            else multiplier = 10;
+            const step = multiplier * pow10;
+            return parseFloat(step.toPrecision(15));
+        }
+
+        function drawAxes(isDarkMode) {
+            const axisColor = isDarkMode ? '#d1d5db' : '#2d3748';
+            ctx.strokeStyle = axisColor;
+            ctx.lineWidth = 2;
+            ctx.fillStyle = axisColor;
+            ctx.font = '12px Inter';
+            ctx.beginPath();
+            ctx.moveTo(0, originY);
+            ctx.lineTo(canvas.width, originY);
+            ctx.stroke();
+            ctx.beginPath();
+            ctx.moveTo(originX, 0);
+            ctx.lineTo(originX, canvas.height);
+            ctx.stroke();
+            const labelStep = getNiceNumberStep(65, scale);
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            const startX = Math.floor(((0 - originX) / scale) / labelStep) * labelStep;
+            const endX = Math.ceil(((canvas.width - originX) / scale) / labelStep) * labelStep;
+            for (let i = startX; i <= endX; i += labelStep) {
+                if (Math.abs(i) < 1e-9) continue;
+                ctx.fillText(parseFloat(i.toPrecision(5)), originX + i * scale, originY + 8);
+            }
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'middle';
+            const math_y_min = (originY - canvas.height) / scale;
+            const math_y_max = originY / scale;
+            const startY = Math.ceil(math_y_min / labelStep) * labelStep;
+            const endY = Math.floor(math_y_max / labelStep) * labelStep;
+            for (let i = startY; i <= endY; i += labelStep) {
+                if (Math.abs(i) < 1e-9) continue;
+                ctx.fillText(parseFloat(i.toPrecision(5)), originX + 8, originY - i * scale);
+            }
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'top';
+            ctx.fillText('0', originX + 4, originY + 4);
+        }
+
+        function drawFunction(func) {
+            ctx.strokeStyle = '#3b82f6';
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            let firstPoint = true;
+            for (let pixelX = 0; pixelX < canvas.width; pixelX++) {
+                const mathX = (pixelX - originX) / scale;
+                try {
+                    const mathY = func(mathX);
+                    if (isFinite(mathY)) {
+                        const pixelY = originY - mathY * scale;
+                        if (firstPoint) {
+                            ctx.moveTo(pixelX, pixelY);
+                            firstPoint = false;
+                        } else {
+                            ctx.lineTo(pixelX, pixelY);
+                        }
+                    } else {
+                        firstPoint = true;
+                    }
+                } catch (e) {
+                    firstPoint = true;
+                }
+            }
+            ctx.stroke();
+        }
+        
+        function showModal(message) {
+            errorModal.textContent = message;
+            errorModal.style.display = 'block';
+        }
+
+        function hideModal() {
+            errorModal.style.display = 'none';
+        }
+
+        // --- Event Handlers ---
+        drawButton.addEventListener("click", () => {
+            try {
+                const parsedExpression = parseMathExpression(functionInput.value);
+                const newFunc = new Function('x', `return ${parsedExpression}`);
+                newFunc(1); 
+                currentFunc = newFunc;
+                draw();
+                hideModal();
+            } catch (e) {
+                showModal(`Invalid function syntax. Error: ${e.message}`);
+            }
+        });
+        
+        functionSelect.addEventListener('change', (e) => {
+            functionInput.value = e.target.value;
+            drawButton.click();
+        });
+
+        canvas.addEventListener('mousedown', (e) => {
+            isDragging = true;
+            dragStartX = e.clientX;
+            dragStartY = e.clientY;
+            originStartX = originX;
+            originStartY = originY;
+            canvas.style.cursor = 'grabbing';
+        });
+
+        canvas.addEventListener('mouseup', () => {
+            isDragging = false;
+            canvas.style.cursor = 'grab';
+        });
+        
+        canvas.addEventListener('mouseleave', () => {
+            isDragging = false;
+            canvas.style.cursor = 'grab';
+        });
+
+        canvas.addEventListener('mousemove', (e) => {
+            if (isDragging) {
+                const dx = e.clientX - dragStartX;
+                const dy = e.clientY - dragStartY;
+                originX = originStartX + dx;
+                originY = originStartY + dy;
+                draw();
+            }
+        });
+
+        canvas.addEventListener('wheel', (e) => {
+            e.preventDefault();
+            const zoomFactor = 1.1;
+            const mouseX = e.offsetX;
+            const mouseY = e.offsetY;
+            const mouseMathX_before = (mouseX - originX) / scale;
+            const mouseMathY_before = (originY - mouseY) / scale;
+            if (e.deltaY < 0) {
+                scale *= zoomFactor;
+            } else {
+                scale /= zoomFactor;
+            }
+            originX = mouseX - mouseMathX_before * scale;
+            originY = mouseY + mouseMathY_before * scale;
+            draw();
+        });
+
+        window.addEventListener('resize', initializeCanvas);
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+            checkDarkMode();
+            draw();
+        });
+
+        // --- Initial Call ---
+        checkDarkMode();
+        initializeCanvas();
+    </script>
+</body>
+</html>
